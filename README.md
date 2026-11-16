@@ -9,10 +9,10 @@ Designed specifically in the game's dark ninja aesthetic with zero engine tamper
 ## 🌟 Key Features
 
 ### 🔓 1. Master Unlocks
-* **🌟 One-Click Master Unlock**: Instantly unlocks all **4,515 CGs & Animations**, all **765 Scene Replays**, activates full **Patron Tier 3 status**, adds all 12 outfits & shop items, grants ¥50k Cash, ¥20k Ramen, and maxes MC skills.
+* **🌟 One-Click Master Unlock**: Instantly unlocks all **4,515 CGs & Animations**, all **765 Scene Replays**, activates full **Patreon Kage Rank (DRM Bypass)**, adds all 12 outfits & shop items, grants ¥999k Cash, ¥50k Ramen, and maxes MC skills and stats.
 * **🖼️ Full CG Gallery**: Unlocks all illustrations and animations in the Extras Gallery.
 * **🎬 All Scene Replays**: Unlocks all 765 interactive and story replays in the Replay Gallery.
-* **👑 Patron & Supporter Tier 3**: Activates subscriber-exclusive paths, variants, and animations.
+* **👑 Kage Rank & DRM Bypass**: Activates top supporter rank (Kage), completely bypassing all rank checks (Jonin+, ANBU, Kage), granting full access to Cheat Engine, Replay Scene Unlocker, and Gallery Unlocker without any prompt barriers.
 * **👗 Outfits & Key Items**: Unlocks all shop outfits and key items directly in the player inventory.
 
 ### 📊 2. Character & Relationship Stats

@@ -12,6 +12,8 @@ hashed engine files or triggering _glcache.pyd integrity checks.
 
 import sys
 import os
+import base64
+import zlib
 
 try:
     import renpy
@@ -430,9 +432,9 @@ def jump_day_30(): set_day_number(30)
 
 # --- Master Unlocks ---
 
-def unlock_all_gallery():
-    """Unlock all gallery images and animations."""
-    if not renpy:
+def unlock_all_gallery(notify=True):
+    """Unlock all gallery images and animations permanently."""
+    if not renpy or not hasattr(renpy, "game") or not hasattr(renpy.game, "persistent"):
         return
     p  = renpy.game.persistent
     st = renpy.store
@@ -440,18 +442,45 @@ def unlock_all_gallery():
     p.gallery_unlocker = True
     setattr(st, "gallery_unlocker", True)
 
-    gallery_items = getattr(st, "gallery_items", [])
-    if hasattr(p, "unlocked_gallery_items"):
-        if p.unlocked_gallery_items is None:
-            p.unlocked_gallery_items = []
-        for g in gallery_items:
-            dname = getattr(g, "display_name", None) or getattr(g, "name", None)
-            if dname and dname not in p.unlocked_gallery_items:
-                p.unlocked_gallery_items.append(dname)
+    gallery_items = getattr(st, "gallery_items", None) or getattr(st, "_gx", [])
+    if not hasattr(p, "unlocked_gallery_items") or p.unlocked_gallery_items is None:
+        p.unlocked_gallery_items = set()
+    elif isinstance(p.unlocked_gallery_items, list):
+        p.unlocked_gallery_items = set(p.unlocked_gallery_items)
+
+    seen_images = getattr(p, "_seen_images", None)
+    has_seen_images = seen_images is not None and hasattr(seen_images, "__setitem__")
 
     for g in gallery_items:
         try:
             setattr(g, "_lk", False)
+        except Exception:
+            pass
+
+        for attr in ("display_name", "shown_as", "full_path", "name"):
+            val = getattr(g, attr, None)
+            if val:
+                try:
+                    p.unlocked_gallery_items.add(val)
+                except Exception:
+                    pass
+                if has_seen_images:
+                    seen_images[val] = True
+
+        if getattr(g, "is_animation", False) and getattr(g, "video_path", None):
+            vpath = g.video_path
+            if has_seen_images:
+                seen_images[vpath] = True
+                if not vpath.startswith("images/"):
+                    seen_images["images/" + vpath] = True
+
+    # Monkey patch _GxR._rl so future category refreshes keep images unlocked
+    _GxR = getattr(st, "_GxR", None)
+    if _GxR is not None:
+        try:
+            def _always_unlocked_rl(self):
+                self._lk = False
+            _GxR._rl = _always_unlocked_rl
         except Exception:
             pass
 
@@ -460,14 +489,15 @@ def unlock_all_gallery():
     except Exception:
         pass
 
-    safe_play_sfx()
-    safe_notify("Gallery Unlocked: %d CGs & animations!" % len(gallery_items))
-    safe_restart()
+    if notify:
+        safe_play_sfx()
+        safe_notify("Gallery Unlocked: %d CGs & animations!" % len(gallery_items))
+        safe_restart()
 
 
-def unlock_all_replays():
-    """Unlock all scene replays."""
-    if not renpy:
+def unlock_all_replays(notify=True):
+    """Unlock all scene replays and animation videos permanently."""
+    if not renpy or not hasattr(renpy, "game") or not hasattr(renpy.game, "persistent"):
         return
     p  = renpy.game.persistent
     st = renpy.store
@@ -475,51 +505,154 @@ def unlock_all_replays():
     p.replay_unlocker = True
     setattr(st, "replay_unlocker", True)
 
-    replay_items = getattr(st, "Replay_items", [])
-    if hasattr(p, "unlocked_replay_items"):
-        if p.unlocked_replay_items is None:
-            p.unlocked_replay_items = []
-        for r in replay_items:
-            rname = getattr(r, "name", None)
-            if rname and rname not in p.unlocked_replay_items:
-                p.unlocked_replay_items.append(rname)
+    replay_items = getattr(st, "Replay_items", None) or getattr(st, "_rx", [])
+    if not hasattr(p, "unlocked_replay_items") or p.unlocked_replay_items is None:
+        p.unlocked_replay_items = set()
+    elif isinstance(p.unlocked_replay_items, list):
+        p.unlocked_replay_items = set(p.unlocked_replay_items)
+
+    seen_images = getattr(p, "_seen_images", None)
+    has_seen_images = seen_images is not None and hasattr(seen_images, "__setitem__")
+    seen_labels = getattr(p, "_seen_labels", None)
+    has_seen_labels = seen_labels is not None and hasattr(seen_labels, "__setitem__")
+
+    for r in replay_items:
+        # Replay label
+        rlabel = getattr(r, "replay", None)
+        if rlabel:
+            try:
+                p.unlocked_replay_items.add(rlabel)
+            except Exception:
+                pass
+            if has_seen_labels:
+                seen_labels[rlabel] = True
+
+        # Replay display name
+        rname = getattr(r, "name", None)
+        if rname:
+            try:
+                p.unlocked_replay_items.add(rname)
+            except Exception:
+                pass
+
+        # Video path for animation entries
+        if getattr(r, "is_animation", False) and getattr(r, "video_path", None):
+            vpath = r.video_path
+            if has_seen_images:
+                seen_images[vpath] = True
+                if not vpath.startswith("images/"):
+                    seen_images["images/" + vpath] = True
+
+        # Thumbnails
+        thumbs = getattr(r, "thumbs", None)
+        if thumbs and has_seen_images:
+            for t in thumbs:
+                seen_images[t] = True
 
     try:
         renpy.save_persistent()
     except Exception:
         pass
 
-    safe_play_sfx()
-    safe_notify("Replays Unlocked: %d scenes!" % len(replay_items))
-    safe_restart()
+    if notify:
+        safe_play_sfx()
+        safe_notify("Replays Unlocked: %d scenes & animations!" % len(replay_items))
+        safe_restart()
 
 
-def unlock_patron_and_bonuses():
-    """Activate Patron Tier 3, Itch version, and bonus content."""
-    if not renpy:
+def unlock_patron_and_bonuses(notify=True):
+    """Activate top Patron rank (Kage), full DRM bypass, Itch mode & supporter perks."""
+    if not renpy or not hasattr(renpy, "game") or not hasattr(renpy.game, "persistent"):
         return
     p  = renpy.game.persistent
     st = renpy.store
+    ver = getattr(renpy.config, "version", "0.26d")
 
-    p.activated           = True
-    p.activation_tier     = "PATREON"
-    p.current_activation  = "Jonin"
-    p.i_version           = True
-    p.itchset             = True
-    p.animations_enabled  = True
+    # Set highest Patron tier: 'Kage' grants Chunin, Jonin, and ANBU/Kage perks
+    p.activated                  = True
+    p.activation_tier            = "PATREON"
+    p.current_activation         = "Kage"
+    p.i_version                  = True
+    p.itchset                    = True
+    p.animations_enabled         = True
+    p.game_version_for_languages = ver
+    p.translationstring          = 101219
+    p.gallery_unlocker           = True
+    p.replay_unlocker            = True
+    p.show_only_unlocked         = False
+
+    # Valid compressed payload to pass _validate_activation_realtime checks
     try:
-        p.translationstring = getattr(p, "translationstring", 101218) + 1
+        p.module_config = base64.b64encode(zlib.compress(b"hos_kage_full_drm_bypass")).decode("utf-8")
     except Exception:
         pass
+
+    # Store-level mirrors
+    setattr(st, "current_activation", "Kage")
+    setattr(st, "activation_tier", "PATREON")
+    setattr(st, "activated", True)
+    setattr(st, "gallery_unlocker", True)
+    setattr(st, "replay_unlocker", True)
+
+    # Monkey patch realtime matrix validators to always return True
+    st._validate_activation_realtime = lambda *args, **kwargs: True
+    st._sys_activation_matrix_a      = lambda *args, **kwargs: True
+    st._sys_activation_matrix_b      = lambda *args, **kwargs: True
+    st.ipa_a                         = lambda *args, **kwargs: True
+    st.ipa_b                         = lambda *args, **kwargs: True
+    st.ipa_d                         = lambda *args, **kwargs: True
+
+    # Neutralize game's auto-reset functions on boot
+    def _safe_drm_keeper(*args, **kwargs):
+        p.current_activation         = "Kage"
+        p.activation_tier            = "PATREON"
+        p.activated                  = True
+        p.i_version                  = True
+        p.itchset                    = True
+        p.game_version_for_languages = ver
+        return True
+
+    if hasattr(st, "check_and_load_modules"):
+        st.check_and_load_modules = _safe_drm_keeper
+    if hasattr(st, "check_language_installation_status"):
+        st.check_language_installation_status = _safe_drm_keeper
 
     try:
         renpy.save_persistent()
     except Exception:
         pass
 
-    safe_play_sfx()
-    safe_notify("Patron Tier 3 & Supporter Content Activated!")
-    safe_restart()
+    if notify:
+        safe_play_sfx()
+        safe_notify("Kage Rank Activated! All Patreon DRM & rank restrictions bypassed!")
+        safe_restart()
+
+
+def _enforce_kage_drm_bypass():
+    """Continuously ensures Kage rank and DRM bypass remain active on every screen interaction."""
+    if not renpy or not hasattr(renpy, "game") or not hasattr(renpy.game, "persistent"):
+        return
+    p  = renpy.game.persistent
+    st = renpy.store
+    ver = getattr(renpy.config, "version", "0.26d")
+
+    if getattr(p, "current_activation", None) != "Kage":
+        p.current_activation         = "Kage"
+        p.activation_tier            = "PATREON"
+        p.activated                  = True
+        p.i_version                  = True
+        p.itchset                    = True
+        p.animations_enabled         = True
+        p.game_version_for_languages = ver
+        p.gallery_unlocker           = True
+        p.replay_unlocker            = True
+
+    if getattr(st, "current_activation", None) != "Kage":
+        setattr(st, "current_activation", "Kage")
+        setattr(st, "activation_tier", "PATREON")
+        setattr(st, "activated", True)
+        setattr(st, "gallery_unlocker", True)
+        setattr(st, "replay_unlocker", True)
 
 
 def unlock_all_quests():
@@ -566,17 +699,17 @@ def complete_all_quests():
 
 
 def unlock_all_everything():
-    """Master one-click unlock: Gallery, Replays, Patron, Outfits, Money, Skills."""
-    unlock_all_gallery()
-    unlock_all_replays()
-    unlock_patron_and_bonuses()
+    """Master one-click unlock: Gallery, Replays, Kage Rank, Outfits, Money, Skills."""
+    unlock_patron_and_bonuses(notify=False)
+    unlock_all_gallery(notify=False)
+    unlock_all_replays(notify=False)
     add_all_shop_items()
     set_cash(999999)
     set_ramen(50000)
     max_player_skills()
     max_all_character_stats()
     safe_play_sfx()
-    safe_notify("MASTER UNLOCK COMPLETE! All content, stats & currency maxed!")
+    safe_notify("MASTER UNLOCK COMPLETE! Kage rank, gallery, replays & stats maxed!")
     safe_restart()
 
 
@@ -1161,7 +1294,7 @@ screen hos_mod_menu():
                             vbox:
                                 spacing 8
                                 text "{color=#FFD700}{b}ONE-CLICK COMPLETE UNLOCK{/b}{/color}" size 16
-                                text "Unlocks all Gallery CGs, Replays, Patron Tier 3, all items, Y999k Cash, Y50k Ramen, maxes all character stats and player skills.":
+                                text "Unlocks all Gallery CGs, Replays, Kage Rank (DRM Bypass), all items, Y999k Cash, Y50k Ramen, maxes all character stats and player skills.":
                                     size 13
                                     color "#E1BEE7"
                                 textbutton "{color=#FFD700}UNLOCK EVERYTHING NOW{/color}":
@@ -1210,11 +1343,11 @@ screen hos_mod_menu():
                                 padding (12, 10)
                                 vbox:
                                     spacing 6
-                                    text "{color=#FFD700}{b}Patron Tier 3{/b}{/color}" size 14
-                                    text "Activates top Patreon tier, unlocks all subscriber-exclusive paths and animations.":
+                                    text "{color=#FFD700}{b}Patreon Kage Rank (Full DRM Bypass){/b}{/color}" size 14
+                                    text "Activates top Patreon tier (Kage), unlocking Cheat Engine, Replay & Gallery Unlockers, and all subscriber content.":
                                         size 12
                                         color "#B0BEC5"
-                                    textbutton "Activate Patron Tier 3 (Jonin)" text_size 12 background "#6A1B9A" padding (8, 4) action Function(hos_mod.unlock_patron_and_bonuses)
+                                    textbutton "Activate Kage Rank (DRM Bypass)" text_size 12 background "#6A1B9A" padding (8, 4) action Function(hos_mod.unlock_patron_and_bonuses)
 
                             frame:
                                 xsize 560
@@ -1303,6 +1436,19 @@ def install_mod():
         if hasattr(renpy.config, "always_shown_screens"):
             if "hos_mod_overlay" not in renpy.config.always_shown_screens:
                 renpy.config.always_shown_screens.append("hos_mod_overlay")
+
+        # Automatically apply Kage rank DRM bypass, gallery and replay unlocks on boot
+        try:
+            unlock_patron_and_bonuses(notify=False)
+            unlock_all_gallery(notify=False)
+            unlock_all_replays(notify=False)
+        except Exception as _act_err:
+            print("[HoS-MOD] Auto-unlock notice: %s" % _act_err)
+
+        # Hook continuous DRM bypass into Ren'Py's interact callbacks
+        if hasattr(renpy.config, "interact_callbacks"):
+            if _enforce_kage_drm_bypass not in renpy.config.interact_callbacks:
+                renpy.config.interact_callbacks.append(_enforce_kage_drm_bypass)
 
         _mod_installed = True
         print("[HoS-MOD] Shinobi MOD Menu successfully initialized & registered!")
